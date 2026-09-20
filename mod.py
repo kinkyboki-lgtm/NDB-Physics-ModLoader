@@ -2,15 +2,48 @@ import os
 import subprocess
 import shutil
 import re
+import sys
 
-# Paths
-GAME_DIR = r"C:\Program Files (x86)\Steam\steamapps\common\Nuclear Design Bureau"
+def get_game_dir():
+    """Dynamically detects the game directory regardless of installation drive."""
+    # 1. Check current directory first (in case user drops the script into the game folder)
+    if os.path.exists("resources/app.asar") or os.path.exists("resources/app"):
+        return os.getcwd()
+
+    # 2. Check standard C: drive path
+    default_path = r"C:\Program Files (x86)\Steam\steamapps\common\Nuclear Design Bureau"
+    if os.path.exists(default_path):
+        return default_path
+    
+    # 3. Look up Steam's registry key on Windows to find the base install directory
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam")
+            steam_path = winreg.QueryValueEx(key, "SteamPath")[0]
+            winreg.CloseKey(key)
+            
+            fallback_path = os.path.join(steam_path, "steamapps", "common", "Nuclear Design Bureau")
+            if os.path.exists(fallback_path):
+                return fallback_path
+        except Exception:
+            pass
+            
+    return None
+
+print("=== NDB AUTO-MODDER (SMART ZERO-PACK) ===")
+
+GAME_DIR = get_game_dir()
+if not GAME_DIR:
+    print("\n❌ ERROR: Could not automatically locate 'Nuclear Design Bureau'.")
+    print("👉 FIX: Please move this 'mod.py' file directly inside your game's")
+    print("   main installation folder (where the game .exe lives) and run it again.")
+    sys.exit(1)
+
 RESOURCES_DIR = os.path.join(GAME_DIR, "resources")
 ASAR_FILE = os.path.join(RESOURCES_DIR, "app.asar")
 UNPACKED_DIR = os.path.join(RESOURCES_DIR, "app_unpacked")
 APP_DIR = os.path.join(RESOURCES_DIR, "app") 
-
-print("=== NDB AUTO-MODDER (SMART ZERO-PACK) ===")
 
 # Step 1: Determine the state of the game
 if os.path.exists(APP_DIR):
@@ -20,7 +53,13 @@ elif os.path.exists(ASAR_FILE):
     print("Vanilla game detected. Extracting app.asar (this will take a few seconds)...")
     if os.path.exists(UNPACKED_DIR):
         shutil.rmtree(UNPACKED_DIR)
-    subprocess.run(f'npx @electron/asar extract app.asar app_unpacked', shell=True, cwd=RESOURCES_DIR, check=True)
+        
+    try:
+        subprocess.run('npx @electron/asar extract app.asar app_unpacked', shell=True, cwd=RESOURCES_DIR, check=True)
+    except subprocess.CalledProcessError:
+        print("\n❌ ERROR: Failed to extract .asar archive.")
+        print("👉 FIX: Make sure Node.js is installed on your computer so 'npx' can run.")
+        sys.exit(1)
     
     print("Deleting original app.asar to enable Zero-Pack mode...")
     os.remove(ASAR_FILE)
@@ -29,9 +68,15 @@ elif os.path.exists(ASAR_FILE):
     os.rename(UNPACKED_DIR, APP_DIR)
     WORKER_FILE = os.path.join(APP_DIR, "dist", "assets", "simulationWorker-E_IlajXO.js")
 else:
-    print("ERROR: Neither app.asar nor app folder found!")
+    print("❌ ERROR: Neither app.asar nor app folder found!")
     print("Please verify game files in Steam to reset, then run the script again.")
-    exit()
+    sys.exit(1)
+
+# Ensure the targeted simulation worker script exists
+if not os.path.exists(WORKER_FILE):
+    print(f"❌ ERROR: Expected file missing: {WORKER_FILE}")
+    print("The game version may have changed or updated.")
+    sys.exit(1)
 
 # Step 2: Read the JavaScript file
 print("Reading simulationWorker...")
@@ -66,7 +111,7 @@ new_pbx = '''PBX_9501: {
 
 code, replacements = re.subn(old_pbx, new_pbx, code, flags=re.DOTALL)
 if replacements == 0:
-    print("WARNING: Could not find PBX_9501 block to replace!")
+    print("⚠️ WARNING: Could not find PBX_9501 block to replace!")
 else:
     print(f"Successfully replaced {replacements} material block(s).")
 
@@ -75,40 +120,5 @@ print("Saving modified simulationWorker...")
 with open(WORKER_FILE, 'w', encoding='utf-8') as f:
     f.write(code)
 
-# Step 6: Generate the README.md file automatically so you don't have to copy it from chat!
-print("Generating README.md file for GitHub/Discord...")
-readme_content = """# 🌩️ Nuclear Design Bureau - Custom Physics Mod Loader
-
-This is the first ever mod loader for *Nuclear Design Bureau*. It bypasses the game's 700MB Electron `.asar` archive and directly injects custom physics variables into the WebGPU `simulationWorker` thread.
-
-## 🏆 Credits
-- **z.ap** - Lead Reverse-Engineer & Modder
-- **boki** - Co-Developer & Tester
-- *(With huge thanks to the AI assistant that helped crack the WebGPU headers and .asar archive!)*
-
-## 🚀 What it does
-- Extracts the game's source code automatically.
-- Patches syntax errors in the minified JavaScript.
-- Replaces the standard `PBX-9501` High Explosive with a **2x Strength Super Green HE**.
-- Uses a "Zero-Pack" method to install the mod in less than 5 seconds!
-
-## 🛠️ How to use it
-1. Make sure you have [Python](https://www.python.org/downloads/) and [Node.js](https://nodejs.org/) installed.
-2. Put `mod.py` anywhere on your computer.
-3. Open a terminal and run: `py mod.py`
-4. Launch the game! Look for the bright green PBX-9501 in your materials list.
-
-## 🔄 How to restore the vanilla game
-Because this script uses the "Zero-Pack" method (deleting `app.asar`), if you ever want to play the normal game again, just go to Steam, right-click *Nuclear Design Bureau* -> Properties -> Installed Files -> **Verify integrity of game files**. Steam will wipe the mod and restore the clean files.
-
-## 💥 How to make your own mods
-Open `mod.py` and look for the `new_pbx` variable. You can change the density, detonation velocity, pressure, or color to whatever you want! You can also use the Python regex logic to target other materials like `GUNPOWDER`, `URANIUM`, or `TUNGSTEN`.
-"""
-
-with open("README.md", "w", encoding="utf-8") as f:
-    f.write(readme_content)
-
 print("\n=== SUCCESS! ===")
-print("1. Game modded successfully!")
-print("2. README.md file created in this folder!")
-print("Launch Nuclear Design Bureau now!")
+print("Game modded successfully! Launch Nuclear Design Bureau now!")
